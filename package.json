@@ -1,11 +1,11 @@
 {
-  "name": "telegram-mcp",
+  "name": "telegram-lm-interface",
   "version": "1.0.0",
   "type": "module",
   "description": "Telegram LM chat interface",
-  "main": "index.js",
+  "main": "./index.js",
   "bin": {
-    "telegram-mcp": "index.js"
+    "telegram-mcp": "./index.js"
   },
   "scripts": {
     "start": "node index.js",
@@ -19,6 +19,6 @@
   "license": "MIT",
   "dependencies": {
     "dotenv": "^17.4.2",
-    "node-telegram-bot-api": "^0.63.0"
+    "node-telegram-bot-api": "^0.67.0"
   }
 }

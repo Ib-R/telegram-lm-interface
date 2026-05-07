@@ -10,17 +10,18 @@ dotenv.config();
 ============================================ */
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-
-const CHAT_ID_ALLOWED_LIST = process.env.CHAT_ID_ALLOWED_LIST?.split(",").map((id) => id.trim());
-
 const LM_STUDIO_URL =
-  process.env.LM_STUDIO_URL || "http://localhost:1234";
-
+  process.env.LM_STUDIO_URL || "http://127.0.0.1:1234/v1";
 const LM_STUDIO_MODEL =
-  process.env.LM_STUDIO_MODEL || "llama3.1";
+  process.env.LM_STUDIO_MODEL || "qwen2.5-vl-7b-instruct";
+
+const CHAT_ID_ALLOWED_LIST =
+  process.env.CHAT_ID_ALLOWED_LIST?.split(",").map((x) =>
+    x.trim()
+  ) || null;
 
 if (!TELEGRAM_BOT_TOKEN) {
-  console.error("TELEGRAM_BOT_TOKEN must be set");
+  console.error("Missing TELEGRAM_BOT_TOKEN");
   process.exit(1);
 }
 
@@ -30,9 +31,6 @@ if (!TELEGRAM_BOT_TOKEN) {
 
 const conversationMemory = new Map();
 
-const SYSTEM_PROMPT =
-  "You are a helpful AI assistant. Respond naturally and concisely.";
-
 function getChatState(chatId) {
   if (!conversationMemory.has(chatId)) {
     conversationMemory.set(chatId, {
@@ -40,7 +38,8 @@ function getChatState(chatId) {
       messages: [
         {
           role: "system",
-          content: SYSTEM_PROMPT,
+          content:
+            "You are a helpful assistant. Be concise and useful.",
         },
       ],
     });
@@ -53,14 +52,32 @@ function getCurrentModel(chatId) {
   return getChatState(chatId).model;
 }
 
+function isIdAllowed(chatId) {
+  return (
+    !CHAT_ID_ALLOWED_LIST ||
+    CHAT_ID_ALLOWED_LIST.includes(chatId)
+  );
+}
+
+function trimHistory(state) {
+  if (state.messages.length <= 21) return;
+
+  const system = state.messages[0];
+
+  state.messages = [
+    system,
+    ...state.messages.slice(-20),
+  ];
+}
+
 /* ============================================
-   TELEGRAM BOT
+   TELEGRAM
 ============================================ */
 
 const bot = new TelegramBot(
   TELEGRAM_BOT_TOKEN,
   {
-    polling: false, // IMPORTANT
+    polling: false,
   }
 );
 
@@ -73,67 +90,113 @@ bot.on("error", (err) =>
 );
 
 /* ============================================
-   TELEGRAM COMMANDS
+   LM STUDIO HELPERS
+============================================ */
+
+async function lmChat(messages, model) {
+  const response = await fetch(
+    `${LM_STUDIO_URL}/chat/completions`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type":
+          "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: 0.7,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const txt = await response.text();
+    throw new Error(
+      `LM Studio ${response.status}: ${txt}`
+    );
+  }
+
+  const data = await response.json();
+
+  return (
+    data?.choices?.[0]?.message
+      ?.content || "No response."
+  );
+}
+
+/* ============================================
+   COMMANDS
 ============================================ */
 
 bot.onText(/^\/model$/, async (msg) => {
-  const chatId = msg.chat.id.toString();
-  if (!isIdAllowed(chatId)) {
-    await bot.sendMessage(chatId, "You are not authorized to use this bot.");
+  const chatId =
+    msg.chat.id.toString();
+
+  if (!isIdAllowed(chatId))
     return;
-  }
 
   await bot.sendMessage(
     chatId,
-    `Current model: ${getCurrentModel(chatId)}`
+    `Current model: ${getCurrentModel(
+      chatId
+    )}`
   );
 });
 
 bot.onText(
   /^\/set-model\s+(.+)$/,
   async (msg, match) => {
-    try {
-      const chatId =
-        msg.chat.id.toString();
+    const chatId =
+      msg.chat.id.toString();
 
-      if (!isIdAllowed(chatId)) {
-        await bot.sendMessage(chatId, "You are not authorized to use this bot.");
-        return;
-      }
+    if (!isIdAllowed(chatId))
+      return;
 
-      const modelName =
-        match?.[1]?.trim();
+    const model =
+      match?.[1]?.trim();
 
-      if (!modelName) {
-        await bot.sendMessage(
-          chatId,
-          "Usage: /set-model <model-name>"
-        );
-        return;
-      }
-
-      const state =
-        getChatState(chatId);
-
-      state.model = modelName;
-
+    if (!model) {
       await bot.sendMessage(
         chatId,
-        `Model changed to: ${modelName}`
+        "Usage: /set-model <model>"
       );
-    } catch (error) {
-      console.error(error);
-
-      await bot.sendMessage(
-        msg.chat.id,
-        "Failed to change model."
-      );
+      return;
     }
+
+    const state =
+      getChatState(chatId);
+
+    state.model = model;
+
+    await bot.sendMessage(
+      chatId,
+      `Model changed to: ${model}`
+    );
   }
 );
 
+bot.onText(/^\/reset$/, async (msg) => {
+  const chatId =
+    msg.chat.id.toString();
+
+  if (!isIdAllowed(chatId))
+    return;
+
+  conversationMemory.delete(
+    chatId
+  );
+
+  getChatState(chatId);
+
+  await bot.sendMessage(
+    chatId,
+    "Conversation reset."
+  );
+});
+
 /* ============================================
-   TELEGRAM CHAT HANDLER
+   TEXT CHAT
 ============================================ */
 
 bot.on("message", async (msg) => {
@@ -141,136 +204,187 @@ bot.on("message", async (msg) => {
     const chatId =
       msg.chat.id.toString();
 
-    if (!isIdAllowed(chatId)) {
-      await bot.sendMessage(chatId, "You are not authorized to use this bot.");
+    if (!isIdAllowed(chatId))
       return;
-    }
 
     if (!msg.text) return;
-
-    if (msg.text.startsWith("/"))
+    if (
+      msg.photo ||
+      msg.document ||
+      msg.voice
+    )
       return;
 
-    await processUserMessage(
+    if (
+      msg.text.startsWith("/")
+    )
+      return;
+
+    const state =
+      getChatState(chatId);
+
+    state.messages.push({
+      role: "user",
+      content: msg.text,
+    });
+
+    trimHistory(state);
+
+    await bot.sendChatAction(
       chatId,
-      msg.text
-    );
-  } catch (error) {
-    console.error(
-      "Message handler error:",
-      error
+      "typing"
     );
 
-    try {
-      await bot.sendMessage(
-        msg.chat.id,
-        "Unexpected error occurred."
-      );
-    } catch { }
-  }
-});
-
-/* ============================================
-   LM STUDIO CHAT
-============================================ */
-
-function isIdAllowed(chatId) {
-  return (
-    !CHAT_ID_ALLOWED_LIST ||
-    CHAT_ID_ALLOWED_LIST.includes(chatId)
-  );
-}
-
-async function processUserMessage(
-  chatId,
-  text
-) {
-  const state =
-    getChatState(chatId);
-
-  const model = state.model;
-
-  await bot.sendChatAction(
-    chatId,
-    "typing"
-  );
-
-  state.messages.push({
-    role: "user",
-    content: text,
-  });
-
-  if (state.messages.length > 21) {
-    const systemMessage =
-      state.messages[0];
-
-    state.messages = [
-      systemMessage,
-      ...state.messages.slice(-20),
-    ];
-  }
-
-  try {
-    const response = await fetch(
-      `${LM_STUDIO_URL}/chat/completions`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
-        body: JSON.stringify({
-          model,
-          messages:
-            state.messages,
-          temperature: 0.7,
-        }),
-      }
+    const reply = await lmChat(
+      state.messages,
+      state.model
     );
-
-    if (!response.ok) {
-      const txt =
-        await response.text();
-
-      throw new Error(
-        `LM Studio ${response.status}: ${txt}`
-      );
-    }
-
-    const data =
-      await response.json();
-
-    const aiResponse =
-      data?.choices?.[0]
-        ?.message?.content;
-
-    if (!aiResponse) {
-      throw new Error(
-        "Invalid response from LM Studio"
-      );
-    }
 
     state.messages.push({
       role: "assistant",
-      content: aiResponse,
+      content: reply,
     });
 
     await bot.sendMessage(
       chatId,
-      aiResponse
+      reply
     );
   } catch (error) {
-    console.error(
-      "LM Studio error:",
-      error.message
-    );
+    console.error(error);
 
     await bot.sendMessage(
-      chatId,
+      msg.chat.id,
       "Error talking to LM Studio."
     );
   }
-}
+});
+
+/* ============================================
+   PHOTO / VISION
+============================================ */
+
+bot.on("photo", async (msg) => {
+  try {
+    const chatId =
+      msg.chat.id.toString();
+
+    if (!isIdAllowed(chatId))
+      return;
+
+    const photo =
+      msg.photo[
+        msg.photo.length - 1
+      ];
+
+    await bot.sendChatAction(
+      chatId,
+      "upload_photo"
+    );
+
+    const fileUrl =
+      await bot.getFileLink(
+        photo.file_id
+      );
+
+    if (!fileUrl) {
+      throw new Error(
+        "No Telegram file URL"
+      );
+    }
+
+    const imgRes =
+      await fetch(
+        String(fileUrl)
+      );
+
+    if (!imgRes.ok) {
+      throw new Error(
+        "Failed to download image"
+      );
+    }
+
+    const arrayBuffer =
+      await imgRes.arrayBuffer();
+
+    const buffer =
+      Buffer.from(
+        arrayBuffer
+      );
+
+    const base64 =
+      buffer.toString(
+        "base64"
+      );
+
+    const caption =
+      msg.caption?.trim() ||
+      "Describe this image.";
+
+    const state =
+      getChatState(chatId);
+
+    const messages = [
+      ...state.messages,
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: caption,
+          },
+          {
+            type:
+              "image_url",
+            image_url: {
+              url:
+                `data:image/jpeg;base64,${base64}`,
+            },
+          },
+        ],
+      },
+    ];
+
+    await bot.sendChatAction(
+      chatId,
+      "typing"
+    );
+
+    const reply =
+      await lmChat(
+        messages,
+        state.model
+      );
+
+    state.messages.push({
+      role: "user",
+      content:
+        "[Image sent] " +
+        caption,
+    });
+
+    state.messages.push({
+      role: "assistant",
+      content: reply,
+    });
+
+    trimHistory(state);
+
+    await bot.sendMessage(
+      chatId,
+      reply
+    );
+  } catch (error) {
+    console.error(
+      "Photo vision error:",
+      error
+    );
+
+    await bot.sendMessage(
+      msg.chat.id,
+      "Failed to analyze image."
+    );
+  }
+});
 
 /* ============================================
    STARTUP
@@ -278,22 +392,21 @@ async function processUserMessage(
 
 async function main() {
   try {
-    // START TELEGRAM FIRST
     await bot.startPolling({
       restart: true,
       interval: 300,
     });
 
-    console.error(
-      "Telegram polling started"
+    console.log(
+      "Telegram bot started."
     );
-
-    console.error(
-      `LM Studio URL: ${LM_STUDIO_URL}`
+    console.log(
+      "LM Studio URL:",
+      LM_STUDIO_URL
     );
-
-    console.error(
-      `Default model: ${LM_STUDIO_MODEL}`
+    console.log(
+      "Default model:",
+      LM_STUDIO_MODEL
     );
   } catch (error) {
     console.error(
@@ -312,7 +425,7 @@ main();
 
 async function shutdown() {
   try {
-    console.error(
+    console.log(
       "Shutting down..."
     );
 
