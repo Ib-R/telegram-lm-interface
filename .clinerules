@@ -1,0 +1,67 @@
+# Cline Rules for Telegram Bot Project
+# =======================================
+
+## Project Overview
+- This is a Node.js/JavaScript Telegram bot project
+- Located at: e:/Programming/workspace/mcps/telegram-lm-interface
+- Repository: https://github.com/Ib-R/telegram-lm-interface.git
+- Uses workspaces configuration with "telegram" hint
+
+## Code Style & Conventions
+- Use modern JavaScript/ES6+ syntax
+- Follow consistent naming conventions (camelCase for variables/functions, PascalCase for classes)
+- Keep functions focused and single-purpose
+- Use meaningful variable and function names
+- Add JSDoc comments for complex functions and public APIs
+
+## File Organization
+- Keep related functionality in logical modules
+- Separate concerns: models, controllers, routes, services, utilities
+- Use index.js as the main entry point
+- Follow existing project structure patterns
+
+## Security Considerations
+- Never commit secrets or API keys (use .env.example pattern)
+- Validate all user inputs from Telegram
+- Implement proper error handling without leaking sensitive info
+- Sanitize user data before storing in database
+- Use environment variables for configuration (.env file not committed)
+
+## Testing
+- Write tests for critical functions and business logic
+- Maintain good test coverage for core features
+- Test edge cases and error scenarios
+- Don't write tests for trivial utilities or one-liners
+
+## Documentation
+- Keep README.md up to date with project status and instructions
+- Add inline comments explaining complex logic
+- Document API endpoints if applicable
+- Include usage examples where helpful
+
+## Bot-Specific Rules
+- Handle Telegram Webhook errors gracefully (HTTP 401, etc.)
+- Use long-polling as fallback when webhooks fail
+- Implement rate limiting for API calls
+- Handle unknown/removed users in updates
+- Cache frequently accessed data to reduce API calls
+
+## Optimization Guidelines
+- Avoid unnecessary re-fetching of Telegram user data
+- Batch database operations where possible
+- Implement pagination for list endpoints
+- Use Redis or similar for shared state if needed
+
+## Development Workflow
+- Make small, focused commits
+- Write descriptive commit messages
+- Update related files when making changes
+- Ensure build passes before committing
+- Run linters/tests locally before push
+
+## Common Tasks Priority
+1. Fix bugs first
+2. Add tests for critical paths
+3. Update documentation as needed
+4. Optimize performance only after functionality is solid
+5. Refactor dead code or technical debt when it makes sense
