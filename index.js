@@ -10,6 +10,7 @@ dotenv.config();
 ============================================ */
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const LM_STUDIO_URL =
   process.env.LM_STUDIO_URL || "http://127.0.0.1:1234/v1";
 const LM_STUDIO_MODEL =
@@ -20,10 +21,6 @@ const CHAT_ID_ALLOWED_LIST =
     x.trim()
   ) || null;
 
-if (!TELEGRAM_BOT_TOKEN) {
-  console.error("Missing TELEGRAM_BOT_TOKEN");
-  process.exit(1);
-}
 
 /* ============================================
    MEMORY
@@ -101,6 +98,7 @@ async function lmChat(messages, model) {
       headers: {
         "Content-Type":
           "application/json",
+        "authorization": `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
         model,
@@ -273,7 +271,7 @@ bot.on("photo", async (msg) => {
 
     const photo =
       msg.photo[
-        msg.photo.length - 1
+      msg.photo.length - 1
       ];
 
     await bot.sendChatAction(
@@ -391,6 +389,11 @@ bot.on("photo", async (msg) => {
 ============================================ */
 
 async function main() {
+  if (!TELEGRAM_BOT_TOKEN && process.env.NODE_ENV !== 'test') {
+    console.error("Missing TELEGRAM_BOT_TOKEN");
+    process.exit(1);
+  }
+
   try {
     await bot.startPolling({
       restart: true,
@@ -417,7 +420,11 @@ async function main() {
   }
 }
 
-main();
+export { getChatState, getCurrentModel, isIdAllowed, trimHistory, main, lmChat };
+
+if (import.meta.main) {
+  main();
+}
 
 /* ============================================
    SHUTDOWN
